@@ -1,12 +1,16 @@
 # GoreBox
 
-Настоящий proxy/VPN-клиент на C# (.NET 8, WPF): обвязка над ядром **nekobox_core**
+proxy/VPN-клиент на C# (.NET 8, WPF): обвязка над ядром **nekobox_core**
 (sing-box из исходников nekoray, vendored в `core/`).
 ## Протоколы
 Профили: `vmess`, `vless`, `trojan`, `shadowsocks`, `socks`, `http`, `hysteria2`,
 `hysteria`, `tuic`, `anytls`, `ssh`, `wireguard`, `amneziawg`, `mtproto`, `tunnel` (custom JSON).
+<img width="1034" height="715" alt="image" src="https://github.com/user-attachments/assets/2e8b6b3b-635b-4c85-b780-008bfeb9b06b" />
+<img width="1701" height="716" alt="image" src="https://github.com/user-attachments/assets/584fa00e-61ec-4b7d-b474-57e8104545d4" />
 
-| Требование | Как реализовано |
+
+
+| Протокол | Реализация |
 |---|---|
 | vmess / vless / trojan / shadowsocks / http | outbounds ядра sing-box (сборка без extra-тегов) |
 | wireguard | outbounds (старые ядра) или `endpoints` (≥1.11); MTU clamp, auto_route/strict_route в TUN |
