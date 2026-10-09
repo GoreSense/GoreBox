@@ -542,7 +542,7 @@
                         <Border x:Name="marker" Width="3" Height="16" CornerRadius="2"
                                 Background="{DynamicResource Accent}" HorizontalAlignment="Left"
                                 Visibility="Hidden" Margin="0" />
-                        <ContentPresenter Margin="14,9" VerticalAlignment="Center" />
+                        <ContentPresenter x:Name="content" Margin="14,9" VerticalAlignment="Center" />
                     </Grid>
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsMouseOver" Value="True">
@@ -555,6 +555,19 @@
                             <Setter Property="Foreground" Value="{DynamicResource Accent}" />
                             <Setter Property="FontWeight" Value="SemiBold" />
                         </Trigger>
+                        <!-- разделы «Панели»/«SSH» (Tag panel/ssh) сами не подсвечиваются никогда:
+                             акцент — только на конкретной открытой записи внутри их списка;
+                             контент (заголовок раздела) прижимается к краю как у остальных вкладок --> 
+                        <DataTrigger Binding="{Binding Tag, RelativeSource={RelativeSource Self}}" Value="panel">
+                            <Setter TargetName="bg" Property="Background" Value="Transparent" />
+                            <Setter TargetName="marker" Property="Visibility" Value="Hidden" />
+                            <Setter TargetName="content" Property="Margin" Value="0" />
+                        </DataTrigger>
+                        <DataTrigger Binding="{Binding Tag, RelativeSource={RelativeSource Self}}" Value="ssh">
+                            <Setter TargetName="bg" Property="Background" Value="Transparent" />
+                            <Setter TargetName="marker" Property="Visibility" Value="Hidden" />
+                            <Setter TargetName="content" Property="Margin" Value="0" />
+                        </DataTrigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate>
             </Setter.Value>
@@ -588,10 +601,11 @@
 
     <Style x:Key="PlainItem" TargetType="ListBoxItem">
         <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+        <Setter Property="Background" Value="Transparent" />
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="ListBoxItem">
-                    <Border x:Name="bg" Background="Transparent" CornerRadius="8">
+                    <Border x:Name="bg" Background="{TemplateBinding Background}" CornerRadius="8">
                         <ContentPresenter />
                     </Border>
                     <ControlTemplate.Triggers>
@@ -605,6 +619,23 @@
                 </ControlTemplate>
             </Setter.Value>
         </Setter>
+    </Style>
+
+    <!-- шапка раздела навигации с выпадающим списком («Панели», «SSH»): вид как у NavItem.
+         Border не имеет Foreground — цвет текста задаём прикреплённым TextElement.Foreground,
+         он наследуется внутренними TextBlock. -->
+    <Style x:Key="NavSectionHeader" TargetType="Border">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="CornerRadius" Value="9" />
+        <Setter Property="Height" Value="34" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="TextElement.Foreground" Value="{DynamicResource TextSecondary}" />
+        <Style.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Background" Value="{DynamicResource CardHover}" />
+                <Setter Property="TextElement.Foreground" Value="{DynamicResource TextPrimary}" />
+            </Trigger>
+        </Style.Triggers>
     </Style>
 
     <Style x:Key="ListPlain" TargetType="ListBox">

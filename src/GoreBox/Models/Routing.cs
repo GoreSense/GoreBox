@@ -156,15 +156,17 @@ public sealed class AppSettings
     /// <summary>Акцентный цвет интерфейса в формате #AARRGGBB; null — цвет темы по умолчанию.</summary>
     public string? AccentColor { get; set; }
 
-    /// <summary>Последний открытый URL вкладки «Панель».</summary>
-    public string? PanelUrl { get; set; }
+    /// <summary>Панели (браузеры) и SSH-подключения (терминалы) из выпадающих списков навигации.</summary>
+    public List<PanelEntry> Panels { get; set; } = new();
+    public List<SshEntry> SshItems { get; set; } = new();
 
-    /// <summary>SSH: хост (можно user@host), порт, логин, пароль и размер шрифта консоли — запоминаются.</summary>
-    public string SshHost { get; set; } = "";
-    public int SshPort { get; set; } = 22;
-    public string SshUser { get; set; } = "";
-    public string SshPassword { get; set; } = "";
-    public double SshFontSize { get; set; } = 13;
+    /// <summary>Какая панель / какое SSH-подключение открыто сейчас.</summary>
+    public string? SelectedPanelId { get; set; }
+    public string? SelectedSshId { get; set; }
+
+    /// <summary>Раскрыты ли выпадающие списки «Панели» и «SSH» в навигации.</summary>
+    public bool NavPanelsExpanded { get; set; }
+    public bool NavSshExpanded { get; set; }
 
     /// <summary>Помнить состояние: при старте поднимать тот же профиль и то же состояние тумблера.</summary>
     public bool RememberState { get; set; } = true;

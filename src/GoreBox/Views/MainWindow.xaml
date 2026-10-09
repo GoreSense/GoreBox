@@ -13,7 +13,7 @@
         FontFamily="Segoe UI Variable Text, Segoe UI" FontSize="13">
 
     <shell:WindowChrome.WindowChrome>
-        <shell:WindowChrome CaptionHeight="44" ResizeBorderThickness="6"
+        <shell:WindowChrome CaptionHeight="32" ResizeBorderThickness="6"
                             GlassFrameThickness="0" CornerRadius="0"
                             UseAeroCaptionButtons="False" />
     </shell:WindowChrome.WindowChrome>
@@ -23,7 +23,7 @@
             SizeChanged="OnRootSizeChanged">
         <Grid>
         <Grid.RowDefinitions>
-            <RowDefinition Height="44" />
+            <RowDefinition Height="32" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
@@ -156,40 +156,80 @@
                                 <TextBlock Text="Настройки" VerticalAlignment="Center" />
                             </StackPanel>
                         </ListBoxItem>
+
+                        <!-- разделы «Панели» и «SSH»: клик по заголовку только раскрывает список
+                             (вкладку не переключает), сами разделы перетаскиваются вместе с вкладками;
+                             не подсвечиваются — акцент только на конкретной открытой записи.
+                             Строки записей + кнопка «+» рисуются кодом (NavSectionMenu). -->
                         <ListBoxItem Tag="panel">
-                            <StackPanel Orientation="Horizontal">
-                                <Viewbox Width="16" Height="16" Margin="0,0,9,0" VerticalAlignment="Center">
-                                <Canvas Width="24" Height="24">
-                                    <Path Data="M5.5,4.5 H18.5 A2,2 0 0 1 20.5,6.5 V17.5 A2,2 0 0 1 18.5,19.5 H5.5 A2,2 0 0 1 3.5,17.5 V6.5 A2,2 0 0 1 5.5,4.5 Z M16.6,12.4 H18.6 M16.6,15.2 H18.6"
-                                          Stroke="{DynamicResource TextPrimary}" StrokeThickness="2.1"
-                                          StrokeStartLineCap="Round" StrokeEndLineCap="Round"
-                                          StrokeLineJoin="Round" />
-                                    <Path Data="M7.6,15.4 V12.6 M11.2,15.4 V8.8 M14.8,15.4 V10.6"
-                                          Stroke="{DynamicResource Accent}" StrokeThickness="2.4"
-                                          StrokeStartLineCap="Round" StrokeEndLineCap="Round"
-                                          StrokeLineJoin="Round" />
-                                </Canvas>
-                            </Viewbox>
-                                <TextBlock Text="Панель" VerticalAlignment="Center" />
+                            <StackPanel>
+                        <Border Style="{StaticResource NavSectionHeader}" PreviewMouseLeftButtonDown="OnNavHeaderMouseDown"
+                                MouseLeftButtonUp="OnPanelHeaderClick">
+                            <Grid>
+                                <StackPanel Orientation="Horizontal">
+                                    <Viewbox Width="16" Height="16" Margin="14,0,9,0" VerticalAlignment="Center">
+                                        <Canvas Width="24" Height="24">
+                                            <Path Data="M5.5,4.5 H18.5 A2,2 0 0 1 20.5,6.5 V17.5 A2,2 0 0 1 18.5,19.5 H5.5 A2,2 0 0 1 3.5,17.5 V6.5 A2,2 0 0 1 5.5,4.5 Z M16.6,12.4 H18.6 M16.6,15.2 H18.6"
+                                                  Stroke="{DynamicResource TextPrimary}" StrokeThickness="2.1"
+                                                  StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                                  StrokeLineJoin="Round" />
+                                            <Path Data="M7.6,15.4 V12.6 M11.2,15.4 V8.8 M14.8,15.4 V10.6"
+                                                  Stroke="{DynamicResource Accent}" StrokeThickness="2.4"
+                                                  StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                                  StrokeLineJoin="Round" />
+                                        </Canvas>
+                                    </Viewbox>
+                                    <TextBlock Text="Панели" VerticalAlignment="Center" />
+                                </StackPanel>
+                                <Path Data="M0,0 L5,5 L10,0" HorizontalAlignment="Right" VerticalAlignment="Center"
+                                      Margin="0,0,12,0"
+                                      Stroke="{DynamicResource TextSecondary}" StrokeThickness="1.6"
+                                      StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round">
+                                    <Path.RenderTransform>
+                                        <RotateTransform x:Name="PanelChevronRot" CenterX="5" CenterY="2.5" />
+                                    </Path.RenderTransform>
+                                </Path>
+                            </Grid>
+                        </Border>
+                        <StackPanel x:Name="PanelMenu" Margin="14,4,14,2" Visibility="Collapsed" />
                             </StackPanel>
                         </ListBoxItem>
+
                         <ListBoxItem Tag="ssh">
-                            <StackPanel Orientation="Horizontal">
-                                <Viewbox Width="16" Height="16" Margin="0,0,9,0" VerticalAlignment="Center">
-                                <Canvas Width="24" Height="24">
-                                    <Path Data="M5.5,4.5 H18.5 A2,2 0 0 1 20.5,6.5 V17.5 A2,2 0 0 1 18.5,19.5 H5.5 A2,2 0 0 1 3.5,17.5 V6.5 A2,2 0 0 1 5.5,4.5 Z"
-                                          Stroke="{DynamicResource TextPrimary}" StrokeThickness="2.1"
-                                          StrokeStartLineCap="Round" StrokeEndLineCap="Round"
-                                          StrokeLineJoin="Round" />
-                                    <Path Data="M7.4,9.4 L10.6,12.6 L7.4,15.8 M13,15.8 H16.4"
-                                          Stroke="{DynamicResource Accent}" StrokeThickness="2.2"
-                                          StrokeStartLineCap="Round" StrokeEndLineCap="Round"
-                                          StrokeLineJoin="Round" />
-                                </Canvas>
-                            </Viewbox>
-                                <TextBlock Text="SSH" VerticalAlignment="Center" />
+                            <StackPanel>
+                        <Border Style="{StaticResource NavSectionHeader}" Margin="0,2,0,0"
+                                PreviewMouseLeftButtonDown="OnNavHeaderMouseDown"
+                                MouseLeftButtonUp="OnSshHeaderClick">
+                            <Grid>
+                                <StackPanel Orientation="Horizontal">
+                                    <Viewbox Width="16" Height="16" Margin="14,0,9,0" VerticalAlignment="Center">
+                                        <Canvas Width="24" Height="24">
+                                            <Path Data="M5.5,4.5 H18.5 A2,2 0 0 1 20.5,6.5 V17.5 A2,2 0 0 1 18.5,19.5 H5.5 A2,2 0 0 1 3.5,17.5 V6.5 A2,2 0 0 1 5.5,4.5 Z"
+                                                  Stroke="{DynamicResource TextPrimary}" StrokeThickness="2.1"
+                                                  StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                                  StrokeLineJoin="Round" />
+                                            <Path Data="M7.4,9.4 L10.6,12.6 L7.4,15.8 M13,15.8 H16.4"
+                                                  Stroke="{DynamicResource Accent}" StrokeThickness="2.2"
+                                                  StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                                  StrokeLineJoin="Round" />
+                                        </Canvas>
+                                    </Viewbox>
+                                    <TextBlock Text="SSH" VerticalAlignment="Center" />
+                                </StackPanel>
+                                <Path Data="M0,0 L5,5 L10,0" HorizontalAlignment="Right" VerticalAlignment="Center"
+                                      Margin="0,0,12,0"
+                                      Stroke="{DynamicResource TextSecondary}" StrokeThickness="1.6"
+                                      StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round">
+                                    <Path.RenderTransform>
+                                        <RotateTransform x:Name="SshChevronRot" CenterX="5" CenterY="2.5" />
+                                    </Path.RenderTransform>
+                                </Path>
+                            </Grid>
+                        </Border>
+                        <StackPanel x:Name="SshMenu" Margin="14,4,14,2" Visibility="Collapsed" />
                             </StackPanel>
                         </ListBoxItem>
+
                     </ListBox>
 
                     <StackPanel Grid.Row="1" VerticalAlignment="Bottom" Margin="14,0,14,10">

@@ -37,10 +37,8 @@ public static class ThemeService
         ReapplyAccent(app);
     }
 
-    /// <summary>Цвет темы по умолчанию (для кнопки «по умолчанию» в пикере).</summary>
-    public static Color DefaultAccent => Current == ThemeMode.Light
-        ? Color.FromRgb(0x2E, 0x6E, 0xE0)
-        : Color.FromRgb(0x5C, 0x96, 0xFF);
+    /// <summary>Цвет акцента по умолчанию: #FF758AAC (для кнопки «по умолчанию» в пикере).</summary>
+    public static Color DefaultAccent => Color.FromRgb(0x75, 0x8A, 0xAC);
 
     /// <summary>
     /// Применить пользовательский акцент поверх палитры темы (или убрать override, если

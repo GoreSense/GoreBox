@@ -2,9 +2,9 @@
 <ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 
-    <Color x:Key="ColAccent">#2E6EE0</Color>
-    <Color x:Key="ColAccentHover">#3D7BEA</Color>
-    <Color x:Key="ColAccentPressed">#255FC7</Color>
+    <Color x:Key="ColAccent">#758AAC</Color>
+    <Color x:Key="ColAccentHover">#889AB8</Color>
+    <Color x:Key="ColAccentPressed">#677997</Color>
 
     <SolidColorBrush x:Key="WindowBg" Color="#F4F5F7" />
     <SolidColorBrush x:Key="PanelBg" Color="#FFFFFF" />
@@ -22,10 +22,10 @@
     <SolidColorBrush x:Key="TextMuted" Color="#8B929C" />
     <SolidColorBrush x:Key="TextOnAccent" Color="#FFFFFF" />
 
-    <SolidColorBrush x:Key="Accent" Color="#2E6EE0" />
-    <SolidColorBrush x:Key="AccentHover" Color="#3D7BEA" />
-    <SolidColorBrush x:Key="AccentPressed" Color="#255FC7" />
-    <SolidColorBrush x:Key="AccentSoft" Color="#E3ECFB" />
+    <SolidColorBrush x:Key="Accent" Color="#758AAC" />
+    <SolidColorBrush x:Key="AccentHover" Color="#889AB8" />
+    <SolidColorBrush x:Key="AccentPressed" Color="#677997" />
+    <SolidColorBrush x:Key="AccentSoft" Color="#E3ECF6" />
 
     <SolidColorBrush x:Key="Success" Color="#1F9D6B" />
     <SolidColorBrush x:Key="SuccessSoft" Color="#E1F5EC" />
@@ -53,7 +53,7 @@
         <GradientStop Color="#00FFFFFF" Offset="1" />
     </LinearGradientBrush>
     <LinearGradientBrush x:Key="LogoGradient" StartPoint="0,0" EndPoint="1,1">
-        <GradientStop Color="#4C87F0" Offset="0" />
-        <GradientStop Color="#2E6EE0" Offset="1" />
+        <GradientStop Color="#889AB8" Offset="0" />
+        <GradientStop Color="#677997" Offset="1" />
     </LinearGradientBrush>
 </ResourceDictionary>

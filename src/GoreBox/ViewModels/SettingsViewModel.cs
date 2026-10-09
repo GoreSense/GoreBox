@@ -337,37 +337,6 @@ public sealed class SettingsViewModel : ObservableObject
         }
     }
 
-    // ---------------------------------------------------------------------- SSH
-
-    /// <summary>
-    /// Логин для вкладки SSH. Если заполнен, используется вместо «user@» из адреса.
-    /// Это те же поля, в которые вкладка SSH запоминает данные при подключении.
-    /// </summary>
-    public string SshLogin
-    {
-        get => _settings.Current.SshUser;
-        set
-        {
-            var v = value ?? "";
-            if (_settings.Current.SshUser == v) return;
-            _settings.Current.SshUser = v;
-            _settings.SaveSoon();
-        }
-    }
-
-    /// <summary>Пароль для вкладки SSH (в поле видны только звёздочки). Если пусто, вкладка спросит при подключении.</summary>
-    public string SshPassword
-    {
-        get => _settings.Current.SshPassword;
-        set
-        {
-            var v = value ?? "";
-            if (_settings.Current.SshPassword == v) return;
-            _settings.Current.SshPassword = v;
-            _settings.SaveSoon();
-        }
-    }
-
     // --------------------------------------------------- место хранения данных
 
     /// <summary>Нужен перезапуск, чтобы выбранное место хранения вступило в силу.</summary>

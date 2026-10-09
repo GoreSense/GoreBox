@@ -102,14 +102,4 @@ public partial class ProfilesView : UserControl
             // буфер обмена занят другим приложением — пропускаем
         }
     }
-
-    private void Button_Click(object sender, RoutedEventArgs e)
-    {
-
-    }
-
-    private void Button_Click_1(object sender, RoutedEventArgs e)
-    {
-
-    }
 }

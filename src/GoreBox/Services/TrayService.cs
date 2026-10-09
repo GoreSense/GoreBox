@@ -1,4 +1,5 @@
 using System.Drawing;
+using System.Runtime.InteropServices;
 using System.Windows;
 using GoreBox.Utils;
 using WinForms = System.Windows.Forms;
@@ -12,8 +13,8 @@ namespace GoreBox.Services;
 public sealed class TrayService : IDisposable
 {
     private readonly WinForms.NotifyIcon _icon;
-    private readonly Icon _iconOn;    // цветной: прокси работает
-    private readonly Icon _iconOff;   // серый: прокси выключен
+    private Icon? _iconOn;          // логотип в цвете индикатора «Подключено»: прокси работает
+    private readonly Icon _iconOff; // серый: прокси выключен
     private bool _proxyOn;
     private bool _disposed;
 
@@ -22,8 +23,7 @@ public sealed class TrayService : IDisposable
 
     public TrayService()
     {
-        _iconOn = LoadIcon("app.ico") ?? ExeIcon();
-        _iconOff = LoadIcon("app-gray.ico") ?? _iconOn;
+        _iconOff = LoadIcon("app-gray.ico") ?? ExeIcon();
 
         _icon = new WinForms.NotifyIcon
         {
@@ -89,14 +89,66 @@ public sealed class TrayService : IDisposable
         return SystemIcons.Application;
     }
 
-    /// <summary>Значок в трее: цветной, когда прокси работает, серый — когда выключен.</summary>
+    /// <summary>
+    /// Значок в трее: тот же логотип, но в цвет индикатора «Подключено», когда прокси работает,
+    /// серый логотип — когда выключен.
+    /// </summary>
     public void SetProxyOn(bool on)
     {
         if (_disposed || _proxyOn == on) return;
         _proxyOn = on;
-        try { _icon.Icon = on ? _iconOn : _iconOff; }
+        try
+        {
+            if (on)
+            {
+                // пересобираем: цвет Success зависит от темы
+                _iconOn?.Dispose();
+                _iconOn = BuildOnIcon();
+            }
+            _icon.Icon = on ? _iconOn : _iconOff;
+        }
         catch { /* ignore */ }
     }
+
+    /// <summary>Тот же логотип, что и app.ico, но в цвете кисти Success (как индикатор «Подключено»).</summary>
+    private static Icon BuildOnIcon()
+    {
+        var brush = System.Windows.Application.Current?.TryFindResource("Success") as System.Windows.Media.SolidColorBrush;
+        var bright = brush is null
+            ? Color.FromArgb(0x3B, 0xC0, 0x8A)
+            : Color.FromArgb(255, brush.Color.R, brush.Color.G, brush.Color.B);
+        var dark = Color.FromArgb(255,
+            (byte)(bright.R * 0.2f), (byte)(bright.G * 0.2f), (byte)(bright.B * 0.2f));
+
+        using var srcIcon = LoadIcon("app.ico");
+        using var src = (srcIcon ?? ExeIcon()).ToBitmap();
+        var dst = new Bitmap(src.Width, src.Height);
+        for (var y = 0; y < src.Height; y++)
+        {
+            for (var x = 0; x < src.Width; x++)
+            {
+                var p = src.GetPixel(x, y);
+                if (p.A == 0) continue;   // прозрачное — оставляем прозрачным
+                // яркость исходного логотипа -> палитра Success: тёмная плитка, яркая метка
+                var lum = (0.299f * p.R + 0.587f * p.G + 0.114f * p.B) / 255f;
+                var t = Math.Clamp((lum - 0.1f) / 0.52f, 0f, 1f);
+                dst.SetPixel(x, y, Color.FromArgb(p.A,
+                    (byte)(dark.R + (bright.R - dark.R) * t),
+                    (byte)(dark.G + (bright.G - dark.G) * t),
+                    (byte)(dark.B + (bright.B - dark.B) * t)));
+            }
+        }
+        var h = dst.GetHicon();
+        try
+        {
+            using var tmp = Icon.FromHandle(h);
+            return (Icon)tmp.Clone();
+        }
+        finally { DestroyIcon(h); }
+    }
+
+    [DllImport("user32.dll")]
+    private static extern bool DestroyIcon(IntPtr handle);
 
     public void SetStatus(string text)
     {

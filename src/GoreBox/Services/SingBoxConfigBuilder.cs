@@ -44,7 +44,7 @@ public static class SingBoxConfigBuilder
         var result = new ConfigBuildResult { ClashApiPort = clashApiPort };
         _ = result;
         var modern = core.SupportsModernRules;
-        var modernDns = core.VersionMinor >= 12 || !core.Exists;
+        var modernDns = core.VersionMajor > 1 || core.VersionMinor >= 12 || !core.Exists;
 
         _ = logFile; // логи ядра перехватываются процессом и дублируются в файл самим приложением
 
@@ -98,6 +98,15 @@ public static class SingBoxConfigBuilder
             {
                 ["type"] = "tun",
                 ["tag"] = TunTag,
+                // Имя адаптера — уникальное на каждый запуск (идея из nekobox: CalculateInterfaceName
+                // подбирает свободное имя). Стандартный подбор «tun0/tun1/…» обманывается гонкой:
+                // при быстрой смене режимов старый wintun-адаптер ещё удаляется драйвером (секунды),
+                // в net.Interfaces() его уже нет, ядро выбирает его же имя и падает с
+                // «create adapter: Cannot create a file when that file already exists |
+                // open existing adapter: Element not found». Случайный суффикс делает коллизию
+                // невозможной: новое имя никогда не занято, удаление старого идёт параллельно.
+                // Суффикс обновляет и CoreService перед каждой повторной попыткой запуска.
+                ["interface_name"] = "GoreBox-" + Guid.NewGuid().ToString("N")[..8],
                 ["address"] = new JsonArray("172.19.0.1/30", "fdfe:dcba:9876::1/126"),
                 ["mtu"] = tunMtu,
                 ["auto_route"] = true,
@@ -247,12 +256,14 @@ public static class SingBoxConfigBuilder
                 foreach (var prefix in new[] { "https://", "tls://", "quic://", "h3://", "udp://" })
                     if (server.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) { server = server[prefix.Length..]; break; }
 
+                // detour не задаём: в новом формате DNS-серверов (sing-box >= 1.12) сервер без detour
+                // сам диалится напрямую. Явный detour на «пустой» direct-outbound ядро считает
+                // ошибкой конфигурации («detour to an empty direct outbound makes no sense»).
                 var node = new JsonObject
                 {
                     ["type"] = type,
                     ["tag"] = "dns-custom",
-                    ["server"] = server,
-                    ["detour"] = DirectTag
+                    ["server"] = server
                 };
                 if (type == "https") node["path"] = "/dns-query";
                 servers.Add(node);
@@ -260,13 +271,17 @@ public static class SingBoxConfigBuilder
             }
             else if (route.TunEnabled)
             {
-                // под TUN системный резолвер уводит запросы в туннель — используем внешний напрямую
+                // под TUN системный резолвер уводит запросы в туннель — используем внешний напрямую.
+                // detour не задаём: в новом формате DNS-серверов (sing-box >= 1.12) сервер без detour
+                // диалится напрямую сам (route.auto_detect_interface выводит его на физический
+                // интерфейс в обход TUN). Явный detour на «пустой» direct-outbound — fatальная
+                // ошибка ядра («detour to an empty direct outbound makes no sense»), из-за которой
+                // ядро падало при старте TUN.
                 servers.Add(new JsonObject
                 {
                     ["type"] = "udp",
                     ["tag"] = "dns-direct",
-                    ["server"] = "1.1.1.1",
-                    ["detour"] = DirectTag
+                    ["server"] = "1.1.1.1"
                 });
                 resolverTag = "dns-direct";
             }
@@ -302,8 +317,11 @@ public static class SingBoxConfigBuilder
             legacyServers.Add(new JsonObject
             {
                 ["tag"] = "dns-custom",
-                ["address"] = remoteServer.Contains("://") ? remoteServer : "udp://" + remoteServer,
-                ["detour"] = DirectTag
+                ["address"] = remoteServer.Contains("://") ? remoteServer : "udp://" + remoteServer
+                // detour не задаём: сервер без detour в любом формате DNS диалится напрямую.
+                // Явный detour на «пустой» direct-outbound свежие ядра (sing-box >= 1.12 и форки
+                // вроде sing-box-extended) отвергают: «detour to an empty direct outbound makes
+                // no sense» — ядро падает на старте.
             });
             resolverTag = "dns-custom";
         }
@@ -312,8 +330,8 @@ public static class SingBoxConfigBuilder
             legacyServers.Add(new JsonObject
             {
                 ["tag"] = "dns-direct",
-                ["address"] = "udp://1.1.1.1",
-                ["detour"] = DirectTag
+                ["address"] = "udp://1.1.1.1"
+                // detour не задаём — см. комментарий у dns-custom выше
             });
             resolverTag = "dns-direct";
         }
@@ -322,7 +340,7 @@ public static class SingBoxConfigBuilder
             resolverTag = "dns-local";
         }
 
-        legacyServers.Add(new JsonObject { ["tag"] = "dns-local", ["address"] = "local", ["detour"] = DirectTag });
+        legacyServers.Add(new JsonObject { ["tag"] = "dns-local", ["address"] = "local" });   // без detour: см. выше
         return new JsonObject
         {
             ["servers"] = legacyServers,

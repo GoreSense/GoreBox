@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.IO;
 using System.Net;
+using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -30,6 +31,10 @@ public sealed partial class CoreService : IDisposable
 
     [GeneratedRegex(@"(?<maj>\d+)\.(?<min>\d+)\.(?<pat>\d+)")]
     private static partial Regex VersionRegex();
+
+    /// <summary>Значение «interface_name» TUN-адаптера, которое выставляет SingBoxConfigBuilder (GoreBox-*).</summary>
+    [GeneratedRegex("\"interface_name\"\\s*:\\s*\"(?<name>GoreBox-[^\"]*)\"")]
+    private static partial Regex TunAdapterNameRegex();
 
     /// <summary>
     /// Build-теги, которых нет в официальном sing-box: по ним узнаём форк
@@ -549,8 +554,38 @@ public sealed partial class CoreService : IDisposable
     // ------------------------------------------------------------------- start
     public async Task StartAsync(string configJson, int clashPort)
     {
-        await StopAsync();
         if (!Info.Exists) throw new InvalidOperationException("Ядро sing-box не найдено");
+
+        // Гонка с удалением wintun-адаптера: при переключении режимов TUN остановка ядра удаляет
+        // сетевой адаптер асинхронно (Windows завершает удаление ещё секунду-две), и мгновенный
+        // повторный запуск падает: CreateAdapter видит ещё живой адаптер («Cannot create a file
+        // when that file already exists»), OpenAdapter — уже удалённый («Element not found»), и
+        // ядро выходит с FATAL «configure tun interface». Чуть позже удаление завершается, и
+        // создание проходит — ровно то, что пользователь делает вручную («подождать и снова»).
+        // На этот и подобные временные сбои повторяем запуск с паузой (имя TUN-адаптера каждый
+        // раз новое — см. StartAttemptAsync).
+        int[] retryDelaysMs = { 3000, 5000 };
+        for (var attempt = 1; ; attempt++)
+        {
+            await StartAttemptAsync(configJson, clashPort);
+            if (State == ConnectionState.Running) return;
+            if (attempt > retryDelaysMs.Length) return;
+
+            var delayMs = retryDelaysMs[attempt - 1];
+            AppendLog($"Ядро не поднялось — похоже, ресурс ещё освобождается после остановки. " +
+                      $"Повтор запуска через {delayMs / 1000} с (попытка {attempt + 1} из {retryDelaysMs.Length + 1})…");
+            await Task.Delay(delayMs);
+        }
+    }
+
+    /// <summary>Одна попытка запуска ядра: gRPC-режим с автоматическим откатом на run -c.</summary>
+    private async Task StartAttemptAsync(string configJson, int clashPort)
+    {
+        await StopAsync();
+
+        // Имя TUN-адаптера — новое на каждую попытку: адаптер предыдущего запуска может ещё
+        // удаляться драйвером wintun, и его имя использовать нельзя (см. SingBoxConfigBuilder).
+        configJson = RefreshTunAdapterName(configJson);
 
         AppPaths.EnsureCreated();
         await File.WriteAllTextAsync(AppPaths.RuntimeConfig, configJson, new UTF8Encoding(false));
@@ -572,6 +607,11 @@ public sealed partial class CoreService : IDisposable
                 try { await StopAsync(); } catch { /* ignore */ }
             }
         }
+
+        // gRPC-попытка могла успеть создать TUN-адаптер и упасть — его имя уже «горит»
+        // (драйвер удаляет адаптер). Для запуска run -c берём свежее имя адаптера.
+        configJson = RefreshTunAdapterName(configJson);
+        await File.WriteAllTextAsync(AppPaths.RuntimeConfig, configJson, new UTF8Encoding(false));
 
         var psi = new ProcessStartInfo
         {
@@ -609,39 +649,86 @@ public sealed partial class CoreService : IDisposable
         process.BeginOutputReadLine();
         process.BeginErrorReadLine();
 
-        // ждём готовности API до 6 секунд
-        var ready = false;
-        using var api = new ClashApiClient();
-        for (var i = 0; i < 60; i++)
-        {
-            if (process.HasExited) break;
-            if (await api.PingAsync(clashPort))
-            {
-                ready = true;
-                break;
-            }
-            await Task.Delay(100);
-        }
-
-        if (ready)
+        var (up, apiUp) = await WaitForReadyAsync(process, configJson, clashPort);
+        if (up)
         {
             SetState(ConnectionState.Running);
-            AppendLog("Ядро запущено.");
-        }
-        else if (process.HasExited)
-        {
-            SetState(ConnectionState.Error);
+            AppendLog(apiUp ? "Ядро запущено." : "Ядро запущено (API не ответил, работаем без статистики).");
         }
         else
         {
-            SetState(ConnectionState.Running);
-            AppendLog("Ядро запущено (API не ответил, работаем без статистики).");
+            SetState(ConnectionState.Error);
         }
     }
 
     private static int SafeExitCode(Process p)
     {
         try { return p.ExitCode; } catch { return -1; }
+    }
+
+    /// <summary>
+    /// Ждёт готовности ядра и возвращает (ядро живо и готово, отвечает ли clash API).
+    /// Ключевой момент: TUN-адаптер стартует дольше всех (его создание может ждать завершения
+    /// удаления адаптера предыдущего запуска — до ~15 с), при этом clash API уже отвечает.
+    /// Если считать ядро запущенным по одному API, получаем ложное «Подключено» с последующим
+    /// FATAL («Ошибка ядра» уже после подключения) и без автоповтора. Поэтому при TUN-конфиге
+    /// успех фиксируется только когда адаптер реально появился в системе; выход процесса
+    /// в любой момент — это ошибка попытки (её подхватит повтор в StartAsync).
+    /// </summary>
+    private async Task<(bool Up, bool ApiUp)> WaitForReadyAsync(Process process, string configJson, int clashPort)
+    {
+        var tunName = TunAdapterNameRegex().Match(configJson).Groups["name"].Value;
+        var wantTun = tunName.Length > 0 || configJson.Contains("tun-in", StringComparison.Ordinal);
+
+        using var api = new ClashApiClient();
+        var apiUp = false;
+        // TUN ждать дольше: создание адаптера упирается в драйвер wintun
+        var deadline = DateTime.UtcNow.AddSeconds(wantTun ? 25 : 6);
+        while (DateTime.UtcNow < deadline)
+        {
+            if (process.HasExited)
+            {
+                // даём stderr/stdout доехать из асинхронных обработчиков, чтобы FATAL попал в лог
+                await Task.Delay(400);
+                return (false, apiUp);
+            }
+            if (!apiUp && await api.PingAsync(clashPort)) apiUp = true;
+            var tunReady = !wantTun || TunAdapterExists(tunName) || TunStartLogged();
+            if (apiUp && tunReady)
+            {
+                // короткая выдержка: ошибки настройки адаптера (IP, стек) сыпятся сразу после создания
+                await Task.Delay(1500);
+                return (!process.HasExited, apiUp);
+            }
+            await Task.Delay(250);
+        }
+
+        return (!process.HasExited, apiUp);
+    }
+
+    /// <summary>Ядро сообщило, что TUN-inbound реально поднят
+    /// («inbound/tun[tun-in]: started at …») — надёжный сигнал готовности TUN.</summary>
+    private bool TunStartLogged()
+    {
+        lock (_sync)
+        {
+            return _recentLog.TakeLast(80).Any(l =>
+                l.Contains("started at ", StringComparison.Ordinal) &&
+                l.Contains("tun[", StringComparison.Ordinal));
+        }
+    }
+
+    /// <summary>Появился ли в системе сетевой интерфейс с таким именем (wintun-адаптер создан).</summary>
+    private static bool TunAdapterExists(string adapterName)
+    {
+        try
+        {
+            foreach (var nic in NetworkInterface.GetAllNetworkInterfaces())
+                if (string.Equals(nic.Name, adapterName, StringComparison.OrdinalIgnoreCase))
+                    return true;
+        }
+        catch { /* ignore */ }
+        return false;
     }
 
     /// <summary>
@@ -731,32 +818,17 @@ public sealed partial class CoreService : IDisposable
         lock (_sync) _rpc = rpc;
 
         // clash API живёт внутри инстанса — та же проверка готовности, что и в run -c
-        var ready = false;
-        using var api = new ClashApiClient();
-        for (var i = 0; i < 60; i++)
-        {
-            if (process.HasExited) break;
-            if (await api.PingAsync(_clashPort))
-            {
-                ready = true;
-                break;
-            }
-            await Task.Delay(100);
-        }
-
-        if (ready)
+        var (up, apiUp) = await WaitForReadyAsync(process, configJson, _clashPort);
+        if (up)
         {
             SetState(ConnectionState.Running);
-            AppendLog("Ядро запущено (gRPC nekobox).");
-        }
-        else if (process.HasExited)
-        {
-            SetState(ConnectionState.Error);
+            AppendLog(apiUp
+                ? "Ядро запущено (gRPC nekobox)."
+                : "Ядро запущено (gRPC nekobox; API не ответил, работаем без статистики).");
         }
         else
         {
-            SetState(ConnectionState.Running);
-            AppendLog("Ядро запущено (gRPC nekobox; API не ответил, работаем без статистики).");
+            SetState(ConnectionState.Error);
         }
     }
 
@@ -882,6 +954,28 @@ public sealed partial class CoreService : IDisposable
         using var api = new ClashApiClient();
         return await api.MeasureDelayAsync(_clashPort, proxyTag, timeoutMs);
     }
+
+    /// <summary>
+    /// Подменяет имя TUN-адаптера в конфиге на свежее (случайный суффикс). Каждый запуск ядра
+    /// должен получать новое имя: старый адаптер после остановки/падения ядра удаляется драйвером
+    /// wintun асинхронно, и повторное использование имени даёт FATAL «configure tun interface:
+    /// (create adapter: … already exists | open existing adapter: Element not found)».
+    /// </summary>
+    private static string RefreshTunAdapterName(string configJson)
+    {
+        var name = "\"interface_name\":\"GoreBox-" + Guid.NewGuid().ToString("N")[..8] + "\"";
+        var m = TunAdapterNameRegex().Match(configJson);
+        if (m.Success)
+            return string.Concat(configJson.AsSpan(0, m.Index), name, configJson.AsSpan(m.Index + m.Length));
+        // Поля нет (конфиг собран старой версией билдера) — вписываем его в TUN-inbound по тегу.
+        var tag = TunTagRegex().Match(configJson);
+        if (tag.Success)
+            return string.Concat(configJson.AsSpan(0, tag.Index + tag.Length), ",", name, configJson.AsSpan(tag.Index + tag.Length));
+        return configJson;
+    }
+
+    [GeneratedRegex("\"tag\"\\s*:\\s*\"tun-in\"")]
+    private static partial Regex TunTagRegex();
 
     private void SetState(ConnectionState state)
     {

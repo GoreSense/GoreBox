@@ -9,7 +9,7 @@
 
         <StackPanel Grid.Row="0" HorizontalAlignment="Center">
             <TextBlock Text="Настройки" Style="{StaticResource TxtH1}" HorizontalAlignment="Center" />
-            <TextBlock Text="Тема, автозапуск, SSH, место хранения данных и ядро sing-box."
+            <TextBlock Text="Тема, автозапуск, место хранения данных и ядро sing-box."
                        Style="{StaticResource TxtMuted}" Margin="0,3,0,0" HorizontalAlignment="Center" />
         </StackPanel>
 
@@ -95,33 +95,6 @@
                             <Button Content="Папка ядра" Style="{StaticResource BtnGhost}" Margin="8,0,0,0"
                                     Command="{Binding OpenFolderCommand}" CommandParameter="core" />
                         </StackPanel>
-                    </StackPanel>
-                </Border>
-
-                <!-- ==================== SSH ==================== -->
-                <Border Style="{StaticResource Card}" Padding="18,16" Margin="0,14,0,0">
-                    <StackPanel>
-                        <TextBlock Text="SSH" Style="{StaticResource TxtH2}" />
-                        <TextBlock Style="{StaticResource TxtMuted}" TextWrapping="Wrap" Margin="0,8,0,0"
-                                   Text="Логин и пароль для вкладки SSH. Если логин заполнен, он используется вместо user@ из адреса. Если поля пусты, вкладка спросит при подключении." />
-
-                        <Grid Margin="0,14,0,0">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-                            <StackPanel>
-                                <TextBlock Text="Логин" Style="{StaticResource TxtMuted}" />
-                                <TextBox Style="{StaticResource InputBox}" Margin="0,4,0,0" Tag="например, root"
-                                         Text="{Binding SshLogin, UpdateSourceTrigger=PropertyChanged}" />
-                            </StackPanel>
-                            <StackPanel Grid.Column="1" Margin="10,0,0,0">
-                                <TextBlock Text="Пароль" Style="{StaticResource TxtMuted}" />
-                                <!-- PasswordBox не умеет биндиться к паролю: значение синхронизирует код окна -->
-                                <PasswordBox x:Name="SshPasswordBox" Style="{StaticResource InputPassword}" Margin="0,4,0,0"
-                                             PasswordChanged="OnSshPasswordChanged" />
-                            </StackPanel>
-                        </Grid>
                     </StackPanel>
                 </Border>
 
