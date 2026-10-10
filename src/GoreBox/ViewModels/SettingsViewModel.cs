@@ -34,6 +34,12 @@ public sealed class SettingsViewModel : ObservableObject
     public event Action<string, bool>? Notify;
     public event Action? ThemeChanged;
 
+    /// <summary>
+    /// Настройки обхода DPI изменились. MainViewModel перезапускает движок,
+    /// если обход сейчас включён — иначе правки вступят в силу при следующем включении.
+    /// </summary>
+    public event Action? DpiSettingsChanged;
+
     public AsyncRelayCommand InstallCoreCommand { get; }
 
     /// <summary>Восстановить ядро из вшитой в приложение копии.</summary>
@@ -146,6 +152,266 @@ public sealed class SettingsViewModel : ObservableObject
             _settings.Current.AutoUpdateCore = value;
             _settings.SaveSoon();
             Raise();
+        }
+    }
+
+    // ------------------------------------------------------------ обход DPI
+    /// <summary>Порт локального прокси с десинхронизацией.</summary>
+    public int DpiPort
+    {
+        get => _settings.Current.Dpi.ListenPort;
+        set
+        {
+            var port = Math.Clamp(value, 1024, 65535);
+            if (_settings.Current.Dpi.ListenPort == port) return;
+            _settings.Current.Dpi.ListenPort = port;
+            _settings.SaveSoon();
+            Raise();
+            DpiSettingsChanged?.Invoke();
+        }
+    }
+
+    /// <summary>Резать ClientHello посередине имени из SNI (для HTTP — перед «Host:»).</summary>
+    public bool DpiSniSplit
+    {
+        get => _settings.Current.Dpi.SniSplit;
+        set
+        {
+            if (_settings.Current.Dpi.SniSplit == value) return;
+            _settings.Current.Dpi.SniSplit = value;
+            _settings.SaveSoon();
+            Raise();
+            DpiSettingsChanged?.Invoke();
+        }
+    }
+
+    /// <summary>Разбивать один TLS record на два.</summary>
+    public bool DpiTlsRecordSplit
+    {
+        get => _settings.Current.Dpi.TlsRecordSplit;
+        set
+        {
+            if (_settings.Current.Dpi.TlsRecordSplit == value) return;
+            _settings.Current.Dpi.TlsRecordSplit = value;
+            _settings.SaveSoon();
+            Raise();
+            DpiSettingsChanged?.Invoke();
+        }
+    }
+
+    /// <summary>Фейк-пакет с маленьким TTL: DPI его видит, сайт — нет.</summary>
+    public bool DpiFakeTtl
+    {
+        get => _settings.Current.Dpi.FakeTtl;
+        set
+        {
+            if (_settings.Current.Dpi.FakeTtl == value) return;
+            _settings.Current.Dpi.FakeTtl = value;
+            _settings.SaveSoon();
+            Raise();
+            DpiSettingsChanged?.Invoke();
+        }
+    }
+
+    /// <summary>TTL фейк-пакета: хватило бы до DPI, но не до сайта.</summary>
+    public int DpiFakeTtlValue
+    {
+        get => _settings.Current.Dpi.FakeTtlValue;
+        set
+        {
+            var ttl = Math.Clamp(value, 1, 24);
+            if (_settings.Current.Dpi.FakeTtlValue == ttl) return;
+            _settings.Current.Dpi.FakeTtlValue = ttl;
+            _settings.SaveSoon();
+            Raise();
+            Raise(nameof(DpiTtlHint));
+            DpiSettingsChanged?.Invoke();
+        }
+    }
+
+    public string DpiTtlHint =>
+        $"Сейчас {_settings.Current.Dpi.FakeTtlValue}. Обычно хватает 3–8: пакет должен дойти до DPI, но не до сайта. " +
+        "Если «Накрыт» — увеличьте; если сайты открываются и без обхода, значение слишком большое.";
+
+    /// <summary>Пауза между частями разделённого пакета, мс.</summary>
+    public int DpiSplitDelayMs
+    {
+        get => _settings.Current.Dpi.SplitDelayMs;
+        set
+        {
+            var delay = Math.Clamp(value, 0, 100);
+            if (_settings.Current.Dpi.SplitDelayMs == delay) return;
+            _settings.Current.Dpi.SplitDelayMs = delay;
+            _settings.SaveSoon();
+            Raise();
+            DpiSettingsChanged?.Invoke();
+        }
+    }
+
+    /// <summary>Дробить исходящие данные по MSS — система сама режет ClientHello на мелкие сегменты.</summary>
+    public bool DpiClampMss
+    {
+        get => _settings.Current.Dpi.ClampMss;
+        set
+        {
+            if (_settings.Current.Dpi.ClampMss == value) return;
+            _settings.Current.Dpi.ClampMss = value;
+            _settings.SaveSoon();
+            Raise();
+            DpiSettingsChanged?.Invoke();
+        }
+    }
+
+    /// <summary>Размер сегмента при дроблении по MSS (TCP_MAXSEG), байт.</summary>
+    public int DpiMssValue
+    {
+        get => _settings.Current.Dpi.MssValue;
+        set
+        {
+            var mss = Math.Clamp(value, 64, 1500);
+            if (_settings.Current.Dpi.MssValue == mss) return;
+            _settings.Current.Dpi.MssValue = mss;
+            _settings.SaveSoon();
+            Raise();
+            DpiSettingsChanged?.Invoke();
+        }
+    }
+
+    /// <summary>
+    /// Мультисплит: ClientHello уходит множеством мелких кусков с паузой, а не двумя частями.
+    /// </summary>
+    public bool DpiMultisplit
+    {
+        get => _settings.Current.Dpi.Multisplit;
+        set
+        {
+            if (_settings.Current.Dpi.Multisplit == value) return;
+            _settings.Current.Dpi.Multisplit = value;
+            _settings.SaveSoon();
+            Raise();
+            DpiSettingsChanged?.Invoke();
+        }
+    }
+
+    /// <summary>Размер куска при мультисплите, байт.</summary>
+    public int DpiMultisplitSize
+    {
+        get => _settings.Current.Dpi.MultisplitSize;
+        set
+        {
+            var size = Math.Clamp(value, 1, 512);
+            if (_settings.Current.Dpi.MultisplitSize == size) return;
+            _settings.Current.Dpi.MultisplitSize = size;
+            _settings.SaveSoon();
+            Raise();
+            DpiSettingsChanged?.Invoke();
+        }
+    }
+
+    /// <summary>Откуда брать адреса сайтов: системный DNS или DoH.</summary>
+    public DohMode DpiDoh
+    {
+        get => _settings.Current.Dpi.Doh;
+        set
+        {
+            if (_settings.Current.Dpi.Doh == value) return;
+            _settings.Current.Dpi.Doh = value;
+            _settings.SaveSoon();
+            Raise();
+            Raise(nameof(DpiDohIsCustom));
+            DpiSettingsChanged?.Invoke();
+        }
+    }
+
+    /// <summary>Показывать поле своего URL DoH.</summary>
+    public bool DpiDohIsCustom => _settings.Current.Dpi.Doh == DohMode.Custom;
+
+    /// <summary>Свой URL DoH.</summary>
+    public string DpiDohUrl
+    {
+        get => _settings.Current.Dpi.DohUrl;
+        set
+        {
+            if (_settings.Current.Dpi.DohUrl == value) return;
+            _settings.Current.Dpi.DohUrl = value.Trim();
+            _settings.SaveSoon();
+            Raise();
+            DpiSettingsChanged?.Invoke();
+        }
+    }
+
+    /// <summary>Прописывать обход в системный прокси Windows, пока он включён.</summary>
+    public bool DpiUseSystemProxy
+    {
+        get => _settings.Current.Dpi.UseSystemProxy;
+        set
+        {
+            if (_settings.Current.Dpi.UseSystemProxy == value) return;
+            _settings.Current.Dpi.UseSystemProxy = value;
+            _settings.SaveSoon();
+            Raise();
+            DpiSettingsChanged?.Invoke();
+        }
+    }
+
+    /// <summary>
+    /// Обновить все привязки раздела «Обход DPI». Вызывается после того, как настройки
+    /// поменяли из другого места — например, DPI-тест подобрал рабочую комбинацию.
+    /// </summary>
+    public void RaiseDpiSettings()
+    {
+        Raise(nameof(DpiPort));
+        Raise(nameof(DpiSniSplit));
+        Raise(nameof(DpiTlsRecordSplit));
+        Raise(nameof(DpiFakeTtl));
+        Raise(nameof(DpiFakeTtlValue));
+        Raise(nameof(DpiTtlHint));
+        Raise(nameof(DpiSplitDelayMs));
+        Raise(nameof(DpiClampMss));
+        Raise(nameof(DpiMssValue));
+        Raise(nameof(DpiMultisplit));
+        Raise(nameof(DpiMultisplitSize));
+        Raise(nameof(DpiUseSystemProxy));
+        Raise(nameof(DpiDoh));
+        Raise(nameof(DpiDohIsCustom));
+        Raise(nameof(DpiDohUrl));
+        Raise(nameof(DpiExitDirect));
+        Raise(nameof(DpiExitProxy));
+    }
+
+    /// <summary>После обхода идём напрямую к сайту (классический zapret-режим).</summary>
+    public bool DpiExitDirect
+    {
+        get => _settings.Current.Dpi.ExitMode == Models.DpiExitMode.Direct;
+        set
+        {
+            if (value) DpiExit = Models.DpiExitMode.Direct;
+            else Raise();
+        }
+    }
+
+    /// <summary>После обхода отдаём трафик в локальный вход активного профиля.</summary>
+    public bool DpiExitProxy
+    {
+        get => _settings.Current.Dpi.ExitMode == Models.DpiExitMode.Proxy;
+        set
+        {
+            if (value) DpiExit = Models.DpiExitMode.Proxy;
+            else Raise();
+        }
+    }
+
+    private Models.DpiExitMode DpiExit
+    {
+        get => _settings.Current.Dpi.ExitMode;
+        set
+        {
+            if (_settings.Current.Dpi.ExitMode == value) return;
+            _settings.Current.Dpi.ExitMode = value;
+            _settings.SaveSoon();
+            Raise(nameof(DpiExitDirect));
+            Raise(nameof(DpiExitProxy));
+            DpiSettingsChanged?.Invoke();
         }
     }
 

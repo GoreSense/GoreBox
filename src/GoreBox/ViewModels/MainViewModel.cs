@@ -17,7 +17,11 @@ public sealed class MainViewModel : ObservableObject
     private readonly ClashApiClient _api = new();
     private readonly DispatcherTimer _statsTimer;
 
+    /// <summary>Обход DPI: локальный прокси с десинхронизацией (живёт отдельно от ядра).</summary>
+    private readonly DpiBypassEngine _dpi = new();
+
     private string _activeTab = "profiles";
+    private string _connectionTab = "proxy";
     private bool _isProxyOn;
     private bool _busy;
     private string _statusMessage = "";
@@ -27,6 +31,16 @@ public sealed class MainViewModel : ObservableObject
     private int _connectionCount;
     private readonly DateTime _startedAt = DateTime.Now;
     private DateTime? _proxyStartedAt;
+
+    private bool _dpiEnabled;
+    private DpiBypassState _dpiState = DpiBypassState.Off;
+    private DateTime? _dpiStartedAt;
+
+    /// <summary>
+    /// Кто последним взял системный прокси Windows: обход DPI или прокси-ядро.
+    /// Оба режима могут быть включены одновременно, а системный прокси — один.
+    /// </summary>
+    private bool _dpiOwnsSystemProxy;
 
     public MainViewModel(IDialogService dialogs)
     {
@@ -52,6 +66,11 @@ public sealed class MainViewModel : ObservableObject
         Preferences.ThemeChanged += () => Raise(nameof(IsDark));
         Preferences.RestartRequested += () => RestartRequested?.Invoke();
 
+        // правки стратегий в настройках применяются сразу: движок перезапускаем, если он поднят
+        Preferences.DpiSettingsChanged += () => _ = RestartDpiIfRunningAsync();
+
+        _dpi.Logged += line => AppendLog("DPI: " + line);
+
         // BeginInvoke, а не Invoke: событие может прийти из потока пула, который в этот момент держит
         // блокировку процесса ядра (обработчик Exited). Ждать UI-поток там нельзя: получится взаимная блокировка.
         Core.StateChanged += _ =>
@@ -68,6 +87,9 @@ public sealed class MainViewModel : ObservableObject
         ToggleProxyCommand = new AsyncRelayCommand(ToggleProxyAsync, () => !Busy);
         ToggleThemeCommand = new RelayCommand(() => IsDark = !IsDark);
         TestPingCommand = new AsyncRelayCommand(TestActivePingAsync, () => ActiveProfile is not null && !Busy);
+        ToggleDpiCommand = new AsyncRelayCommand(ToggleDpiAsync, () => !Busy);
+        TestDpiCommand = new AsyncRelayCommand(TestDpiAsync, () => !Busy);
+        DiagnoseDpiCommand = new AsyncRelayCommand(DiagnoseDpiAsync, () => !Busy);
         InstallCoreCommand = new AsyncRelayCommand(InstallCoreAsync, () => !Busy);
         RestartElevatedCommand = new RelayCommand(_ => RestartElevated());
         TelegramProxyCommand = new RelayCommand(_ => OpenTelegramProxy(), _ => ActiveProfile?.IsTelegramOnly == true);
@@ -98,6 +120,15 @@ public sealed class MainViewModel : ObservableObject
     public RelayCommand ToggleThemeCommand { get; }
     public AsyncRelayCommand TestPingCommand { get; }
     public AsyncRelayCommand InstallCoreCommand { get; }
+
+    /// <summary>Включить / выключить обход DPI.</summary>
+    public AsyncRelayCommand ToggleDpiCommand { get; }
+
+    /// <summary>DPI-тест: проверяем, открывается ли заблокированная площадка.</summary>
+    public AsyncRelayCommand TestDpiCommand { get; }
+
+    /// <summary>Диагностика: таблица «на каком этапе умирает домен» в журнал.</summary>
+    public AsyncRelayCommand DiagnoseDpiCommand { get; }
     public RelayCommand RestartElevatedCommand { get; }
     public RelayCommand TelegramProxyCommand { get; }
     public RelayCommand ShowLogCommand { get; }
@@ -120,6 +151,146 @@ public sealed class MainViewModel : ObservableObject
             if (!SetProperty(ref _activeTab, value)) return;
             App.Settings.Current.LastTab = value;
             App.Settings.SaveSoon();
+        }
+    }
+
+    // ----------------------------- переключатель «Proxy» / «DPI bypass» -----------------------------
+    /// <summary>Какая из двух вкладок открыта в левой карточке: "proxy" или "dpi".</summary>
+    public string ConnectionTab
+    {
+        get => _connectionTab;
+        private set
+        {
+            if (value != "proxy" && value != "dpi")
+            {
+                // переключатель — пара кнопок: даже при отказе возвращаем им правильное состояние
+                Raise(nameof(ConnectionTabIsProxy));
+                Raise(nameof(ConnectionTabIsDpi));
+                return;
+            }
+
+            if (SetProperty(ref _connectionTab, value))
+            {
+                App.Settings.Current.ConnectionTab = value;
+                App.Settings.SaveSoon();
+            }
+
+            Raise(nameof(ConnectionTabIsProxy));
+            Raise(nameof(ConnectionTabIsDpi));
+        }
+    }
+
+    /// <summary>Открыта вкладка «Proxy» (для пары кнопок-переключателей).</summary>
+    public bool ConnectionTabIsProxy
+    {
+        get => _connectionTab != "dpi";
+        set
+        {
+            if (value) ConnectionTab = "proxy";
+            else { Raise(nameof(ConnectionTabIsProxy)); Raise(nameof(ConnectionTabIsDpi)); }
+        }
+    }
+
+    /// <summary>Открыта вкладка «DPI bypass» (для пары кнопок-переключателей).</summary>
+    public bool ConnectionTabIsDpi
+    {
+        get => _connectionTab == "dpi";
+        set
+        {
+            if (value) ConnectionTab = "dpi";
+            else { Raise(nameof(ConnectionTabIsProxy)); Raise(nameof(ConnectionTabIsDpi)); }
+        }
+    }
+
+    // ------------------------------------------------------------------ обход DPI
+    /// <summary>Обход DPI включён (локальный прокси с десинхронизацией поднят).</summary>
+    public bool DpiEnabled
+    {
+        get => _dpiEnabled;
+        private set
+        {
+            if (!SetProperty(ref _dpiEnabled, value)) return;
+            Raise(nameof(DpiToggleText));
+        }
+    }
+
+    /// <summary>Подпись главной кнопки вкладки «DPI bypass».</summary>
+    public string DpiToggleText => DpiEnabled ? "Выключить" : "Включить";
+
+    public DpiBypassState DpiState
+    {
+        get => _dpiState;
+        private set
+        {
+            if (!SetProperty(ref _dpiState, value)) return;
+            Raise(nameof(DpiStateText));
+            Raise(nameof(DpiBrushKey));
+        }
+    }
+
+    /// <summary>Текст там, где на вкладке «Proxy» написано «Подключено».</summary>
+    public string DpiStateText => DpiState switch
+    {
+        DpiBypassState.Broken => "Сломано",
+        DpiBypassState.Covered => "Накрыт",
+        DpiBypassState.Checking => "Проверка…",
+        DpiBypassState.Starting => "Запуск…",
+        DpiBypassState.NoNetwork => "Нет сети",
+        DpiBypassState.Error => "Ошибка",
+        _ => "Выключено"
+    };
+
+    /// <summary>Цвет кружочка слева: зелёный — сломано, красный — накрыт.</summary>
+    public string DpiBrushKey => DpiState switch
+    {
+        DpiBypassState.Broken => "Success",
+        DpiBypassState.Covered => "Danger",
+        DpiBypassState.Error => "Danger",
+        DpiBypassState.Checking => "Warning",
+        DpiBypassState.Starting => "Warning",
+        DpiBypassState.NoNetwork => "Warning",
+        _ => "TextMuted"
+    };
+
+    /// <summary>Адрес локального прокси обхода (показываем, чтобы можно было настроить браузер вручную).</summary>
+    public string DpiPortText => "127.0.0.1:" + App.Settings.Current.Dpi.ListenPort;
+
+    /// <summary>Какие стратегии сейчас включены.</summary>
+    public string DpiStrategiesText
+    {
+        get
+        {
+            var s = App.Settings.Current.Dpi;
+            var parts = new List<string>();
+            if (s.SniSplit) parts.Add("SNI split");
+            if (s.TlsRecordSplit) parts.Add("record split");
+            if (s.FakeTtl)
+            {
+                var fake = $"fake TTL {s.FakeTtlValue}";
+                if (s.FakeCount > 1) fake += $" ×{s.FakeCount}";
+                if (s.FakeAfter) fake += " (после)";
+                parts.Add(fake);
+            }
+            if (s.Multisplit) parts.Add($"мультисплит {s.MultisplitSize} байт");
+            if (s.ClampMss) parts.Add($"MSS {s.MssValue}");
+            return parts.Count == 0 ? "стратегии выключены — трафик идёт как есть" : string.Join(" · ", parts);
+        }
+    }
+
+    public string DpiTrafficText => _dpi.BytesUp == 0 && _dpi.BytesDown == 0
+        ? "—"
+        : $"↑ {Text.Bytes(_dpi.BytesUp)}   ↓ {Text.Bytes(_dpi.BytesDown)}";
+
+    public string DpiUptimeText => _dpiStartedAt is null
+        ? "—"
+        : (DateTime.Now - _dpiStartedAt.Value).ToString(@"hh\:mm\:ss");
+
+    public string DpiSessionsText
+    {
+        get
+        {
+            var count = _dpi.SessionCount;
+            return count == 0 ? "нет соединений" : count + " соединений";
         }
     }
 
@@ -165,6 +336,9 @@ public sealed class MainViewModel : ObservableObject
             ToggleProxyCommand.RaiseCanExecuteChanged();
             InstallCoreCommand.RaiseCanExecuteChanged();
             TestPingCommand.RaiseCanExecuteChanged();
+            ToggleDpiCommand.RaiseCanExecuteChanged();
+            TestDpiCommand.RaiseCanExecuteChanged();
+            DiagnoseDpiCommand.RaiseCanExecuteChanged();
         }
     }
 
@@ -231,6 +405,11 @@ public sealed class MainViewModel : ObservableObject
         Raise(nameof(IsDark));
         Raise(nameof(ThemeIcon));
 
+        _connectionTab = App.Settings.Current.ConnectionTab == "dpi" ? "dpi" : "proxy";
+        Raise(nameof(ConnectionTab));
+        Raise(nameof(ConnectionTabIsProxy));
+        Raise(nameof(ConnectionTabIsDpi));
+
         Routing.Load();
         Profiles.Load();
         SystemProxy.CleanupStale(Routing.Profiles.Select(p => p.ListenPort));
@@ -274,6 +453,9 @@ public sealed class MainViewModel : ObservableObject
             ShowStatus("Восстановление подключения…", false);
             await StartProxyAsync();
         }
+
+        if (App.Settings.Current.RememberState && App.Settings.Current.Dpi.Enabled)
+            _ = StartDpiAsync(ownSystemProxy: !IsProxyOn);
     }
 
     private ProxyProfile? ActiveProfileFromSettings()
@@ -384,6 +566,8 @@ public sealed class MainViewModel : ObservableObject
                 return;
             }
 
+            // системный прокси забирает себе ядро (если обход DPI уже владеет им — он его и оставит)
+            _dpiOwnsSystemProxy = false;
             if (route.UseSystemProxy) SystemProxy.CaptureSnapshot();
 
             ShowStatus("Запуск ядра…", false);
@@ -396,11 +580,11 @@ public sealed class MainViewModel : ObservableObject
                 return;
             }
 
-            if (route.UseSystemProxy)
-                SystemProxy.Enable(route.ListenAddress, route.ListenPort);
-
+            // IsProxyOn выставляем до настройки системного прокси: ApplySystemProxyAsync смотрит на него
             IsProxyOn = true;
             _proxyStartedAt = DateTime.Now;
+            if (route.UseSystemProxy) await ApplySystemProxyAsync();
+
             App.Settings.Current.ProxyWasActive = true;
             App.Settings.Current.ActiveProfileId = _activeProfile.Id;
             App.Settings.SaveSoon();
@@ -415,6 +599,9 @@ public sealed class MainViewModel : ObservableObject
                 : $"Подключено: {_activeProfile.Name} — {statusNote}",
                 statusNote is not null);
             _ = VerifyTunnelAsync();
+
+            // в режиме «через профиль» обход должен переключиться с прямого выхода на вход ядра
+            _ = RefreshDpiUpstreamAsync();
         }
         catch (NotSupportedException ex)
         {
@@ -589,10 +776,10 @@ public sealed class MainViewModel : ObservableObject
         Busy = true;
         try
         {
-            _statsTimer.Stop();
-
-            // сначала возвращаем прежний системный прокси: интернет работает, даже если ядро не ответит
-            await RestoreSystemProxyAsync();
+            // сначала возвращаем прежний системный прокси: интернет работает, даже если ядро не ответит.
+            // Если обход DPI включён, системный прокси тут же переходит к нему.
+            _dpiOwnsSystemProxy = App.Settings.Current.Dpi.UseSystemProxy && DpiEnabled;
+            await ApplySystemProxyAsync();
 
             try
             {
@@ -609,6 +796,10 @@ public sealed class MainViewModel : ObservableObject
             _connectionCount = 0;
             Raise(nameof(ConnectionCountText));
             Raise(nameof(UptimeText));
+            MaybeStopStatsTimer();
+
+            // ядра больше нет — обход в режиме «через профиль» переключается на прямой выход
+            _ = RefreshDpiUpstreamAsync();
 
             if (!keepStateFlag)
             {
@@ -642,6 +833,46 @@ public sealed class MainViewModel : ObservableObject
         }
     });
 
+    /// <summary>
+    /// Системный прокси Windows один, а режимов два: прокси-ядро и обход DPI.
+    /// Отдаём его тому, кто включён последним (<see cref="_dpiOwnsSystemProxy"/>);
+    /// если не включён никто — возвращаем прежние настройки.
+    /// </summary>
+    private Task ApplySystemProxyAsync(bool captureSnapshot = false)
+    {
+        var dpiPort = _dpi.Port;
+        var useDpi = DpiEnabled && _dpiOwnsSystemProxy &&
+                     App.Settings.Current.Dpi.UseSystemProxy && dpiPort > 0;
+
+        var route = Routing.ActiveProfile;
+        var useProxy = !useDpi && IsProxyOn && route.UseSystemProxy;
+
+        var host = useDpi ? "127.0.0.1" : route.ListenAddress.Trim();
+        if (host.Length == 0 || host is "0.0.0.0" or "::" or "[::]" or "*") host = "127.0.0.1";
+        var port = useDpi ? dpiPort : route.ListenPort;
+
+        return Task.Run(() =>
+        {
+            try
+            {
+                if (captureSnapshot) SystemProxy.CaptureSnapshot();
+
+                if (useDpi || useProxy) SystemProxy.Enable(host, port);
+                else if (SystemProxy.IsEnabled) SystemProxy.RestoreSnapshot();
+            }
+            catch (Exception ex)
+            {
+                AppendLog("Не удалось настроить системный прокси: " + ex.Message);
+            }
+        });
+    }
+
+    /// <summary>Таймер метрик нужен, пока работает хотя бы один из режимов.</summary>
+    private void MaybeStopStatsTimer()
+    {
+        if (!IsProxyOn && !DpiEnabled) _statsTimer.Stop();
+    }
+
     private static int FindFreePort()
     {
         var listener = new TcpListener(IPAddress.Loopback, 0);
@@ -654,19 +885,24 @@ public sealed class MainViewModel : ObservableObject
     // ------------------------------------------------------------------ метрики
     private async Task UpdateStatsAsync()
     {
-        if (!IsProxyOn)
+        if (!IsProxyOn && !DpiEnabled)
         {
             _statsTimer.Stop();
             return;
         }
 
-        var traffic = await _api.GetTrafficAsync(Core.ClashApiPort);
-        if (traffic is not null)
-            TrafficText = $"↑ {Text.Bytes(traffic.Upload)}   ↓ {Text.Bytes(traffic.Download)}";
+        if (IsProxyOn)
+        {
+            var traffic = await _api.GetTrafficAsync(Core.ClashApiPort);
+            if (traffic is not null)
+                TrafficText = $"↑ {Text.Bytes(traffic.Upload)}   ↓ {Text.Bytes(traffic.Download)}";
 
-        _connectionCount = await _api.GetActiveConnectionsAsync(Core.ClashApiPort);
-        Raise(nameof(ConnectionCountText));
-        Raise(nameof(UptimeText));
+            _connectionCount = await _api.GetActiveConnectionsAsync(Core.ClashApiPort);
+            Raise(nameof(ConnectionCountText));
+            Raise(nameof(UptimeText));
+        }
+
+        if (DpiEnabled) RaiseDpiStats();
     }
 
     /// <summary>
@@ -810,6 +1046,347 @@ public sealed class MainViewModel : ObservableObject
         }
     }
 
+    // ============================================================== обход DPI
+    /// <summary>Снимок настроек для движка: движок живёт своей копией, пока поднят.</summary>
+    private DpiBypassSettings BuildDpiOptions() => App.Settings.Current.Dpi.Clone();
+
+    /// <summary>Вход ядра, если выбран режим «через профиль»; null — идём напрямую.</summary>
+    private DpiUpstream? BuildDpiUpstream()
+    {
+        if (App.Settings.Current.Dpi.ExitMode != DpiExitMode.Proxy) return null;
+        if (!IsProxyOn) return null;   // ядро не поднято — работаем напрямую
+
+        var route = Routing.ActiveProfile;
+        var host = route.ListenAddress.Trim();
+        if (host.Length == 0 || host is "0.0.0.0" or "::" or "[::]" or "*") host = "127.0.0.1";
+
+        return new DpiUpstream
+        {
+            Host = host,
+            Port = route.ListenPort,
+            Socks = route.Mode == ListenMode.Socks
+        };
+    }
+
+    private async Task ToggleDpiAsync()
+    {
+        if (DpiEnabled) await StopDpiAsync();
+        else await StartDpiAsync();
+    }
+
+    /// <param name="ownSystemProxy">
+    /// Забирать ли системный прокси Windows себе. При восстановлении состояния на старте
+    /// уступаем его прокси-ядру, иначе обход перебил бы настройку профиля.
+    /// </param>
+    private async Task StartDpiAsync(bool ownSystemProxy = true)
+    {
+        if (Busy) return;
+        Busy = true;
+        try
+        {
+            DpiState = DpiBypassState.Starting;
+            RaiseDpiStats();
+
+            await _dpi.StartAsync(BuildDpiOptions(), BuildDpiUpstream());
+
+            DpiEnabled = true;
+            _dpiStartedAt = DateTime.Now;
+            _dpiOwnsSystemProxy = ownSystemProxy;
+            App.Settings.Current.Dpi.Enabled = true;
+            App.Settings.SaveSoon();
+
+            await ApplySystemProxyAsync(captureSnapshot: true);
+
+            RaiseDpiStats();
+            UpdateTrayStatus();
+            _statsTimer.Start();
+            ShowStatus($"Обход DPI включён: {DpiPortText} · {DpiStrategiesText}", false);
+
+            _ = VerifyDpiAsync();
+        }
+        catch (Exception ex)
+        {
+            DpiEnabled = false;
+            _dpiStartedAt = null;
+            DpiState = DpiBypassState.Error;
+            ShowStatus("Обход DPI не запустился: " + ex.Message, true);
+        }
+        finally
+        {
+            Busy = false;
+        }
+    }
+
+    public async Task StopDpiAsync()
+    {
+        if (!DpiEnabled && !_dpi.IsRunning) return;
+        Busy = true;
+        try
+        {
+            await _dpi.StopAsync();
+
+            var wasOwner = _dpiOwnsSystemProxy;
+            DpiEnabled = false;
+            _dpiStartedAt = null;
+            _dpiOwnsSystemProxy = false;
+            DpiState = DpiBypassState.Off;
+            App.Settings.Current.Dpi.Enabled = false;
+            App.Settings.SaveSoon();
+
+            if (wasOwner) await ApplySystemProxyAsync();
+
+            RaiseDpiStats();
+            UpdateTrayStatus();
+            MaybeStopStatsTimer();
+            ShowStatus("Обход DPI выключен", false);
+        }
+        finally
+        {
+            Busy = false;
+        }
+    }
+
+    /// <summary>
+    /// DPI-тест: подключаемся к площадкам, которые в РФ режет DPI, и смотрим, дошли ли.
+    /// Если обход выключен, движок поднимается только на время проверки.
+    /// </summary>
+    private async Task TestDpiAsync()
+    {
+        if (Busy) return;
+        Busy = true;
+
+        var wasRunning = DpiEnabled;
+        try
+        {
+            DpiState = DpiBypassState.Checking;
+            ShowStatus("DPI-тест…", false);
+
+            if (!wasRunning)
+            {
+                await _dpi.StartAsync(BuildDpiOptions(), BuildDpiUpstream());
+                _dpiStartedAt = DateTime.Now;
+            }
+
+            IProgress<string> progress = new Progress<string>(text => ShowStatus("DPI-тест: " + text, false));
+
+            // тест сам перебирает варианты (TTL фейк-пакета, место разрыва, MSS), если
+            // текущие настройки не помогают; движок на время перебора перезапускается
+            var result = await DpiTester.TestAsync(
+                _dpi.Port,
+                RestartDpiEngineAsync,
+                BuildDpiOptions(),
+                text => progress.Report(text));
+
+            foreach (var line in result.Lines) AppendLog("DPI: " + line);
+
+            if (result.Working is { } working)
+            {
+                // тест нашёл рабочую комбинацию — запоминаем её как настройку
+                ApplyWorkingDpiSettings(working);
+                if (wasRunning) await RestartDpiEngineAsync(BuildDpiOptions());
+            }
+            else if (wasRunning)
+            {
+                // ничего не подошло — возвращаем движок к настройкам пользователя
+                await RestartDpiEngineAsync(BuildDpiOptions());
+            }
+
+            ApplyDpiTestResult(result);
+        }
+        catch (Exception ex)
+        {
+            DpiState = wasRunning ? DpiBypassState.Covered : DpiBypassState.Error;
+            ShowStatus("DPI-тест не прошёл: " + ex.Message, true);
+        }
+        finally
+        {
+            if (!wasRunning)
+            {
+                await _dpi.StopAsync();
+                _dpiStartedAt = null;
+                if (DpiState == DpiBypassState.Checking) DpiState = DpiBypassState.Off;
+            }
+
+            RaiseDpiStats();
+            Busy = false;
+        }
+    }
+
+    /// <summary>Первый тест сразу после включения: чтобы состояние в карточке было честным.</summary>
+    private async Task VerifyDpiAsync()
+    {
+        try
+        {
+            await Task.Delay(400);
+            if (!DpiEnabled) return;
+
+            DpiState = DpiBypassState.Checking;
+
+            // быстрая проверка без перебора вариантов: он долгий и прерывает соединения,
+            // поэтому запускается только по кнопке «DPI тест»
+            var result = await DpiTester.TestAsync(
+                _dpi.Port,
+                RestartDpiEngineAsync,
+                BuildDpiOptions(),
+                scan: false);
+
+            foreach (var line in result.Lines) AppendLog("DPI: " + line);
+
+            if (DpiEnabled) ApplyDpiTestResult(result);
+        }
+        catch (Exception ex)
+        {
+            AppendLog("DPI-тест: " + ex.Message);
+            if (DpiState == DpiBypassState.Checking) DpiState = DpiBypassState.Broken;
+        }
+    }
+
+    /// <summary>Записать подобранные тестом настройки обхода (и обновить их в окне настроек).</summary>
+    private void ApplyWorkingDpiSettings(DpiBypassSettings working)
+    {
+        var settings = App.Settings.Current.Dpi;
+        settings.FakeTtl = working.FakeTtl;
+        settings.FakeTtlValue = working.FakeTtlValue;
+        settings.SniSplit = working.SniSplit;
+        settings.TlsRecordSplit = working.TlsRecordSplit;
+    settings.ClampMss = working.ClampMss;
+    settings.MssValue = working.MssValue;
+    settings.Multisplit = working.Multisplit;
+    settings.MultisplitSize = working.MultisplitSize;
+    App.Settings.SaveSoon();
+
+        RaiseDpiStats();
+        Preferences.RaiseDpiSettings();
+        AppendLog("DPI: настройки обхода подобраны автоматически — " + DpiTester.Describe(working));
+    }
+
+    private void ApplyDpiTestResult(DpiTestResult result)
+    {
+        switch (result.Verdict)
+        {
+            case DpiTestVerdict.NoNetwork:
+                DpiState = DpiBypassState.NoNetwork;
+                ShowStatus("Интернет недоступен — DPI-тест ничего не показал", true);
+                break;
+
+            case DpiTestVerdict.Broken:
+                DpiState = DpiBypassState.Broken;
+                ShowStatus($"DPI сломан: {result.Detail}" +
+                           (DpiEnabled ? "" : " — но обход сейчас выключен"), false);
+                break;
+
+        default:
+            DpiState = DpiBypassState.Covered;
+
+            // «накрыт» бывает разный: нельзя пустить под одну гребёнку площадку, которую
+            // рвут по содержимому, и площадку, до которой провайдер не пускает вообще
+            var hint = result.AddressBlocked
+                ? " — разрыв пакетов тут не поможет, нужен VPN: включите профиль и режим «через профиль»"
+                : result.NeedsScan
+                    ? " — нажмите «DPI тест», чтобы подобрать вариант"
+                    : "";
+
+            ShowStatus("Накрыт: " + result.Detail + hint, true);
+            break;
+        }
+    }
+
+    /// <summary>
+    /// Диагностика: по каждому домену пишем в журнал, на каком этапе соединение умирает —
+    /// DNS (и отличается ли ответ DoH от провайдерского), TCP, TLS, HTTP напрямую и через обход.
+    /// Ничего не меняет и не подбирает: только измерения.
+    /// </summary>
+    private async Task DiagnoseDpiAsync()
+    {
+        if (Busy) return;
+        Busy = true;
+
+        try
+        {
+            ShowStatus("Диагностика DPI…", false);
+
+            var settings = App.Settings.Current.Dpi;
+            var port = _dpi.IsRunning ? _dpi.Port : 0;
+
+            AppendLog($"диагностика DPI · DNS: {(settings.Doh == DohMode.Off ? "системный" : "DoH " + settings.Doh)}" +
+                      $" · обход: {(port > 0 ? "127.0.0.1:" + port : "выключен")}");
+
+            var rows = await DpiDiagnostics.RunAsync(
+                DpiDiagnostics.DefaultDomains,
+                port,
+                settings.Doh,
+                settings.DohUrl,
+                domain => ShowStatus("Диагностика DPI: " + domain, false));
+
+            foreach (var row in rows)
+                foreach (var line in row.Lines())
+                    AppendLog(line);
+
+            var summary = DpiDiagnostics.Summary(rows);
+            AppendLog(summary);
+            ShowStatus("Диагностика DPI: " + summary, !rows.All(r => r.OpenedDirect || r.OpenedVia));
+        }
+        catch (Exception ex)
+        {
+            ShowStatus("Диагностика не прошла: " + ex.Message, true);
+        }
+        finally
+        {
+            Busy = false;
+        }
+    }
+
+    private async Task RestartDpiEngineAsync(DpiBypassSettings options)
+    {
+        await _dpi.StopAsync();
+        await _dpi.StartAsync(options, BuildDpiUpstream());
+    }
+
+    /// <summary>
+    /// Обход в режиме «через профиль» зависит от того, поднято ли ядро: перезапускаем движок,
+    /// чтобы он переподключился к нужному выходу.
+    /// </summary>
+    private async Task RefreshDpiUpstreamAsync()
+    {
+        if (!DpiEnabled) return;
+        try
+        {
+            await RestartDpiEngineAsync(BuildDpiOptions());
+        }
+        catch (Exception ex)
+        {
+            AppendLog("Обход DPI: не удалось обновить выход — " + ex.Message);
+        }
+    }
+
+    /// <summary>Настройки стратегий поменяли — перезапускаем движок, если он поднят.</summary>
+    private async Task RestartDpiIfRunningAsync()
+    {
+        RaiseDpiStats();
+        if (!DpiEnabled) return;
+
+        try
+        {
+            await RestartDpiEngineAsync(BuildDpiOptions());
+            RaiseDpiStats();
+            ShowStatus("Настройки обхода DPI применены", false);
+        }
+        catch (Exception ex)
+        {
+            DpiState = DpiBypassState.Error;
+            ShowStatus("Не удалось перезапустить обход DPI: " + ex.Message, true);
+        }
+    }
+
+    private void RaiseDpiStats()
+    {
+        Raise(nameof(DpiTrafficText));
+        Raise(nameof(DpiUptimeText));
+        Raise(nameof(DpiSessionsText));
+        Raise(nameof(DpiPortText));
+        Raise(nameof(DpiStrategiesText));
+    }
+
     // ------------------------------------------------------------------- прочее
     private async Task InstallCoreAsync()
     {
@@ -913,9 +1490,16 @@ public sealed class MainViewModel : ObservableObject
     private void UpdateTrayStatus()
     {
         var profile = _activeProfile?.Name ?? "профиль не выбран";
-        Tray.SetStatus($"GoreBox — {profile} · {StateText}");
-        // значок: цветной, пока ядро подключено; серый — когда прокси выключен или упал
-        Tray.SetProxyOn(Core.State == ConnectionState.Running);
+
+        // обход DPI и прокси могут работать одновременно — в подписи трея говорим про оба
+        var mode = Core.State == ConnectionState.Running
+            ? DpiEnabled ? "прокси + обход DPI" : null
+            : DpiEnabled ? "обход DPI" : null;
+
+        Tray.SetStatus($"GoreBox — {profile} · {StateText}" + (mode is null ? "" : $" · {mode}"));
+
+        // значок: цветной, пока работает ядро или обход; серый — когда не работает ничего
+        Tray.SetProxyOn(Core.State == ConnectionState.Running || DpiEnabled);
     }
 
     private void AppendLog(string line)
@@ -948,6 +1532,15 @@ public sealed class MainViewModel : ObservableObject
     public async Task ShutdownAsync()
     {
         _statsTimer.Stop();
+
+        try
+        {
+            await _dpi.StopAsync();
+        }
+        catch (Exception ex)
+        {
+            AppendLog("Обход DPI не остановлен при выходе: " + ex.Message);
+        }
 
         // сначала возвращаем системный прокси: даже если ядро не ответит, интернет у пользователя останется
         await RestoreSystemProxyAsync();

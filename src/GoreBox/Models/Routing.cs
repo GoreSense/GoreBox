@@ -200,6 +200,25 @@ public sealed class AppSettings
 
     public string LastTab { get; set; } = "profiles";
 
+    /// <summary>
+    /// Какая из двух вкладок в левой карточке открыта: «proxy» или «dpi».
+    /// Это переключатель режима, а не навигация по разделам — поэтому хранится отдельно.
+    /// </summary>
+    public string ConnectionTab { get; set; } = "proxy";
+
+    /// <summary>
+    /// Настройки обхода DPI (стратегии, порт, системный прокси).
+    /// Возвращаем экземпляр всегда: в старом settings.json поля может не быть,
+    /// а обращений к настройкам много — проверять везде неудобно.
+    /// </summary>
+    public DpiBypassSettings Dpi
+    {
+        get => _dpi ??= new DpiBypassSettings();
+        set => _dpi = value ?? new DpiBypassSettings();
+    }
+
+    private DpiBypassSettings? _dpi;
+
     /// <summary>Порядок вкладок в левом меню (ключи: profiles, routing, settings, panel, ssh).</summary>
     public List<string> NavOrder { get; set; } = new();
 

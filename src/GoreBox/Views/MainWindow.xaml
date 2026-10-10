@@ -240,45 +240,110 @@
                                    TextWrapping="Wrap" Margin="0,3,0,0" />
                     </StackPanel>
 
-                    <Border Grid.Row="2" Style="{StaticResource Card}" Margin="12,0,12,12" Padding="14,14,14,12">
+                    <Border Grid.Row="2" Style="{StaticResource Card}" Margin="12,0,12,12" Padding="14,12,14,12">
                         <StackPanel>
-                            <StackPanel Orientation="Horizontal">
-                                <Ellipse Width="8" Height="8" VerticalAlignment="Center">
-                                    <Ellipse.Fill>
-                                        <Binding Path="StatusBrushKey" Converter="{StaticResource BrushKey}" />
-                                    </Ellipse.Fill>
-                                </Ellipse>
-                                <TextBlock Text="{Binding StateText}" Margin="8,0,0,0" FontWeight="SemiBold"
-                                           Foreground="{DynamicResource TextPrimary}" VerticalAlignment="Center" />
-                                <TextBlock Text="{Binding ActivePingText}" Margin="8,0,0,0" Style="{StaticResource TxtMuted}"
-                                           VerticalAlignment="Center" />
+                            <!-- переключатель режима: обычный прокси или обход DPI -->
+                            <Border Background="{DynamicResource CardBgAlt}" CornerRadius="9" Padding="3" Margin="0,0,0,12">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <ToggleButton Grid.Column="0" Style="{StaticResource TabToggleCompact}" Content="Proxy"
+                                                  HorizontalAlignment="Stretch"
+                                                  IsChecked="{Binding ConnectionTabIsProxy}" />
+                                    <ToggleButton Grid.Column="1" Style="{StaticResource TabToggleCompact}" Content="DPI bypass"
+                                                  Margin="3,0,0,0" HorizontalAlignment="Stretch"
+                                                  IsChecked="{Binding ConnectionTabIsDpi}" />
+                                </Grid>
+                            </Border>
+
+                            <!-- ============================ вкладка Proxy ============================ -->
+                            <StackPanel Visibility="{Binding ConnectionTabIsProxy, Converter={StaticResource BoolToVis}}">
+                                <StackPanel Orientation="Horizontal">
+                                    <Ellipse Width="8" Height="8" VerticalAlignment="Center">
+                                        <Ellipse.Fill>
+                                            <Binding Path="StatusBrushKey" Converter="{StaticResource BrushKey}" />
+                                        </Ellipse.Fill>
+                                    </Ellipse>
+                                    <TextBlock Text="{Binding StateText}" Margin="8,0,0,0" FontWeight="SemiBold"
+                                               Foreground="{DynamicResource TextPrimary}" VerticalAlignment="Center" />
+                                    <TextBlock Text="{Binding ActivePingText}" Margin="8,0,0,0" Style="{StaticResource TxtMuted}"
+                                               VerticalAlignment="Center" />
+                                </StackPanel>
+
+                                <Button Content="{Binding ProxyToggleText}" Command="{Binding ToggleProxyCommand}"
+                                        Style="{StaticResource BtnPrimary}" Height="38" Margin="0,12,0,0" />
+                                <Button Content="Проверить задержку" Command="{Binding TestPingCommand}"
+                                        Style="{StaticResource BtnGhost}" Height="30" Margin="0,8,0,0" FontSize="12" />
+                                <Button Content="Открыть в Telegram" Command="{Binding TelegramProxyCommand}"
+                                        Style="{StaticResource BtnGhost}" Height="30" Margin="0,8,0,0" FontSize="12"
+                                        Visibility="{Binding IsTelegramProfile, Converter={StaticResource BoolToVis}}" />
+
+                                <Grid Margin="0,14,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <TextBlock Text="Трафик" Style="{StaticResource TxtCaption}" />
+                                        <TextBlock Text="{Binding TrafficText}" Style="{StaticResource TxtMono}" Margin="0,3,0,0" />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="1" HorizontalAlignment="Right">
+                                        <TextBlock Text="Сессия" Style="{StaticResource TxtCaption}" HorizontalAlignment="Right" />
+                                        <TextBlock Text="{Binding UptimeText}" Style="{StaticResource TxtMono}" Margin="0,3,0,0"
+                                                   HorizontalAlignment="Right" />
+                                    </StackPanel>
+                                </Grid>
+
+                                <TextBlock Text="{Binding ConnectionCountText}" Style="{StaticResource TxtMuted}" Margin="0,8,0,0" />
                             </StackPanel>
 
-                            <Button Content="{Binding ProxyToggleText}" Command="{Binding ToggleProxyCommand}"
-                                    Style="{StaticResource BtnPrimary}" Height="38" Margin="0,12,0,0" />
-                            <Button Content="Проверить задержку" Command="{Binding TestPingCommand}"
-                                    Style="{StaticResource BtnGhost}" Height="30" Margin="0,8,0,0" FontSize="12" />
-                            <Button Content="Открыть в Telegram" Command="{Binding TelegramProxyCommand}"
-                                    Style="{StaticResource BtnGhost}" Height="30" Margin="0,8,0,0" FontSize="12"
-                                    Visibility="{Binding IsTelegramProfile, Converter={StaticResource BoolToVis}}" />
-
-                            <Grid Margin="0,14,0,0">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="Auto" />
-                                </Grid.ColumnDefinitions>
-                                <StackPanel>
-                                    <TextBlock Text="Трафик" Style="{StaticResource TxtCaption}" />
-                                    <TextBlock Text="{Binding TrafficText}" Style="{StaticResource TxtMono}" Margin="0,3,0,0" />
+                            <!-- ========================== вкладка DPI bypass ========================== -->
+                            <StackPanel Visibility="{Binding ConnectionTabIsDpi, Converter={StaticResource BoolToVis}}">
+                                <!-- «Сломано» / «Накрыт» — там же, где у прокси «Подключено»; пинга здесь нет -->
+                                <StackPanel Orientation="Horizontal">
+                                    <Ellipse Width="8" Height="8" VerticalAlignment="Center">
+                                        <Ellipse.Fill>
+                                            <Binding Path="DpiBrushKey" Converter="{StaticResource BrushKey}" />
+                                        </Ellipse.Fill>
+                                    </Ellipse>
+                                    <TextBlock Text="{Binding DpiStateText}" Margin="8,0,0,0" FontWeight="SemiBold"
+                                               Foreground="{DynamicResource TextPrimary}" VerticalAlignment="Center" />
                                 </StackPanel>
-                                <StackPanel Grid.Column="1" HorizontalAlignment="Right">
-                                    <TextBlock Text="Сессия" Style="{StaticResource TxtCaption}" HorizontalAlignment="Right" />
-                                    <TextBlock Text="{Binding UptimeText}" Style="{StaticResource TxtMono}" Margin="0,3,0,0"
-                                               HorizontalAlignment="Right" />
-                                </StackPanel>
-                            </Grid>
 
-                            <TextBlock Text="{Binding ConnectionCountText}" Style="{StaticResource TxtMuted}" Margin="0,8,0,0" />
+                                <Button Content="{Binding DpiToggleText}" Command="{Binding ToggleDpiCommand}"
+                                        Style="{StaticResource BtnPrimary}" Height="38" Margin="0,12,0,0" />
+                                <Button Content="DPI тест" Command="{Binding TestDpiCommand}"
+                                        Style="{StaticResource BtnGhost}" Height="30" Margin="0,8,0,0" FontSize="12"
+                                        ToolTip="Проверяет подключение к сервисам, которые блокируются DPI" />
+                                <Button Content="Диагностика" Command="{Binding DiagnoseDpiCommand}"
+                                        Style="{StaticResource BtnGhost}" Height="30" Margin="0,6,0,0" FontSize="12"
+                                        ToolTip="Таблица в журнале: на каком этапе умирает каждый домен (DNS, TCP, TLS, HTTP) — напрямую и через обход" />
+
+                                <Grid Margin="0,14,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <TextBlock Text="Порт" Style="{StaticResource TxtCaption}" />
+                                        <TextBlock Text="{Binding DpiPortText}" Style="{StaticResource TxtMono}" Margin="0,3,0,0" />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="1" HorizontalAlignment="Right">
+                                        <TextBlock Text="Сессия" Style="{StaticResource TxtCaption}" HorizontalAlignment="Right" />
+                                        <TextBlock Text="{Binding DpiUptimeText}" Style="{StaticResource TxtMono}" Margin="0,3,0,0"
+                                                   HorizontalAlignment="Right" />
+                                    </StackPanel>
+                                </Grid>
+
+                                <TextBlock Text="{Binding DpiStrategiesText}" Style="{StaticResource TxtMuted}" Margin="0,8,0,0"
+                                           TextTrimming="CharacterEllipsis"
+                                           ToolTip="Включённые стратегии обхода (меняются в настройках)" />
+                                <TextBlock Style="{StaticResource TxtMuted}" Margin="0,4,0,0" TextTrimming="CharacterEllipsis">
+                                    <Run Text="{Binding DpiTrafficText, Mode=OneWay}" /><Run Text=" · " /><Run Text="{Binding DpiSessionsText, Mode=OneWay}" />
+                                </TextBlock>
+                            </StackPanel>
                         </StackPanel>
                     </Border>
                 </Grid>

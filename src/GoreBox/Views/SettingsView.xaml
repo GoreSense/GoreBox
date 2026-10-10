@@ -59,6 +59,129 @@
                     </StackPanel>
                 </Border>
 
+                <!-- ==================== обход DPI ==================== -->
+                <Border Style="{StaticResource Card}" Padding="18,16" Margin="0,14,0,0">
+                    <StackPanel>
+                        <TextBlock Text="Обход DPI" Style="{StaticResource TxtH2}" />
+                        <TextBlock Style="{StaticResource TxtMuted}" TextWrapping="Wrap" Margin="0,8,0,0"
+                                   Text="Локальный прокси режет трафик так, что система глубокого анализа не видит имя сайта целиком: разрыв ClientHello по SNI, разбиение записи TLS и фейк-пакет с маленьким TTL. Включается кнопкой на вкладке «DPI bypass» слева внизу." />
+
+                        <Grid Margin="0,16,0,0">
+                            <TextBlock Text="Разрыв по SNI (посредине имени домена)" Style="{StaticResource Txt}" VerticalAlignment="Center" />
+                            <ToggleButton Style="{StaticResource Switch}" HorizontalAlignment="Right" IsChecked="{Binding DpiSniSplit}" />
+                        </Grid>
+                        <TextBlock Style="{StaticResource TxtMuted}" TextWrapping="Wrap" Margin="0,6,0,0"
+                                   Text="Для обычного HTTP режет запрос перед двоеточием в «Host:» — так DPI не видит адрес в первом пакете." />
+
+                        <Grid Margin="0,14,0,0">
+                            <TextBlock Text="Разбиение TLS record" Style="{StaticResource Txt}" VerticalAlignment="Center" />
+                            <ToggleButton Style="{StaticResource Switch}" HorizontalAlignment="Right" IsChecked="{Binding DpiTlsRecordSplit}" />
+                        </Grid>
+                        <TextBlock Style="{StaticResource TxtMuted}" TextWrapping="Wrap" Margin="0,6,0,0"
+                                   Text="Тот же разрыв, но с переупаковкой в две записи TLS: помогает, когда DPI собирает запись по длине из заголовка." />
+
+                        <Grid Margin="0,14,0,0">
+                            <TextBlock Text="Фейк-пакет (TTL)" Style="{StaticResource Txt}" VerticalAlignment="Center" />
+                            <ToggleButton Style="{StaticResource Switch}" HorizontalAlignment="Right" IsChecked="{Binding DpiFakeTtl}" />
+                        </Grid>
+                        <TextBlock Style="{StaticResource TxtMuted}" TextWrapping="Wrap" Margin="0,6,0,0"
+                                   Text="Тот же ClientHello уходит с отдельного соединения с маленьким TTL: DPI его видит и отрабатывает по нему, а до сайта пакет не доходит. Включайте, если один split не помогает." />
+
+                        <Grid Margin="0,16,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel>
+                                <TextBlock Text="Порт" Style="{StaticResource TxtMuted}" />
+                                <TextBox Style="{StaticResource InputBox}" Margin="0,4,8,0" Tag="9910"
+                                         Text="{Binding DpiPort}" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1">
+                                <TextBlock Text="TTL фейка" Style="{StaticResource TxtMuted}" />
+                                <TextBox Style="{StaticResource InputBox}" Margin="0,4,8,0" Tag="5"
+                                         Text="{Binding DpiFakeTtlValue}" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="2">
+                                <TextBlock Text="Пауза, мс" Style="{StaticResource TxtMuted}" />
+                                <TextBox Style="{StaticResource InputBox}" Margin="0,4,0,0" Tag="5"
+                                         Text="{Binding DpiSplitDelayMs}" />
+                            </StackPanel>
+                        </Grid>
+                        <Grid Margin="0,14,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="Дробить по MSS" Style="{StaticResource Txt}" VerticalAlignment="Center" />
+                            <TextBox Grid.Column="1" Style="{StaticResource InputBox}" Width="76" Margin="0,0,10,0"
+                                     Tag="64" Text="{Binding DpiMssValue}"
+                                     Visibility="{Binding DpiClampMss, Converter={StaticResource BoolToVis}}" />
+                            <ToggleButton Grid.Column="2" Style="{StaticResource Switch}" IsChecked="{Binding DpiClampMss}" />
+                        </Grid>
+                        <TextBlock Style="{StaticResource TxtMuted}" TextWrapping="Wrap" Margin="0,6,0,0"
+                                   Text="Принудительный TCP_MAXSEG: система сама режет ClientHello на мелкие сегменты, и имя сайта не попадает в первый пакет целиком." />
+
+                        <Grid Margin="0,14,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="Мультисплит (много мелких кусков)" Style="{StaticResource Txt}" VerticalAlignment="Center" />
+                            <TextBox Grid.Column="1" Style="{StaticResource InputBox}" Width="76" Margin="0,0,10,0"
+                                     Tag="8" Text="{Binding DpiMultisplitSize}"
+                                     Visibility="{Binding DpiMultisplit, Converter={StaticResource BoolToVis}}" />
+                            <ToggleButton Grid.Column="2" Style="{StaticResource Switch}" IsChecked="{Binding DpiMultisplit}" />
+                        </Grid>
+                        <TextBlock Style="{StaticResource TxtMuted}" TextWrapping="Wrap" Margin="0,6,0,0"
+                                   Text="ClientHello уходит кусками по несколько байт с паузой, а не двумя частями: срывает DPI, который собирает запись TLS по длине из заголовка. Пауза между кусками — та же, что и для обычного разрыва." />
+
+                        <TextBlock Text="DNS" Style="{StaticResource TxtCaption}" Margin="0,18,0,0" />
+                        <Grid Margin="0,8,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="Откуда брать адреса" Style="{StaticResource Txt}" VerticalAlignment="Center" Margin="0,0,12,0" />
+                            <ComboBox Grid.Column="1" Style="{StaticResource Combo}" SelectedValuePath="Tag" SelectedValue="{Binding DpiDoh}">
+                                <ComboBoxItem Content="Системный DNS провайдера" Tag="Off" />
+                                <ComboBoxItem Content="DoH: Cloudflare" Tag="Cloudflare" />
+                                <ComboBoxItem Content="DoH: Google" Tag="Google" />
+                                <ComboBoxItem Content="DoH: свой URL" Tag="Custom" />
+                            </ComboBox>
+                        </Grid>
+                        <TextBox Style="{StaticResource InputBox}" Margin="0,8,0,0" Tag="https://cloudflare-dns.com/dns-query"
+                                 Text="{Binding DpiDohUrl}"
+                                 Visibility="{Binding DpiDohIsCustom, Converter={StaticResource BoolToVis}}" />
+                        <TextBlock Style="{StaticResource TxtMuted}" TextWrapping="Wrap" Margin="0,6,0,0"
+                                   Text="Провайдерский DNS часто подменяет адреса заблокированных сайтов и отдаёт адрес заглушки. DoH идёт поверх HTTPS: провайдер запроса не видит и подменить ответ не может. В диагностике («Диагностика» на вкладке «DPI bypass») видно, совпадают ли адреса от DoH и от системного DNS." />
+
+                        <TextBlock Text="{Binding DpiTtlHint}" Style="{StaticResource TxtMuted}" TextWrapping="Wrap" Margin="0,8,0,0" />
+                        <TextBlock Style="{StaticResource TxtMuted}" TextWrapping="Wrap" Margin="0,6,0,0"
+                                   Text="Значение зависит от провайдера, поэтому проще нажать «DPI тест» на вкладке «DPI bypass»: он проверит площадку напрямую и через обход, а если текущий вариант не работает — переберёт комбинации TTL, места разрыва и MSS и применит ту, что открылась." />
+
+                        <TextBlock Text="Куда идти после обхода" Style="{StaticResource TxtCaption}" Margin="0,18,0,0" />
+                        <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                            <ToggleButton Style="{StaticResource SegToggle}" Content="НАПРЯМУЮ"
+                                          IsChecked="{Binding DpiExitDirect}" />
+                            <ToggleButton Style="{StaticResource SegToggleNeutral}" Content="ЧЕРЕЗ ПРОФИЛЬ" Margin="2,0,0,0"
+                                          IsChecked="{Binding DpiExitProxy}" />
+                        </StackPanel>
+                        <TextBlock Style="{StaticResource TxtMuted}" TextWrapping="Wrap" Margin="0,6,0,0"
+                                   Text="«Напрямую» — как zapret: сайты открываются без VPN. «Через профиль» — трафик уходит в локальный вход активного профиля, а десинхронизация отключается (иначе фейк-пакет пошёл бы мимо VPN); если ядро не поднято, движок идёт напрямую." />
+
+                        <Grid Margin="0,16,0,0">
+                            <TextBlock Text="Прописывать в системный прокси Windows" Style="{StaticResource Txt}" VerticalAlignment="Center" />
+                            <ToggleButton Style="{StaticResource Switch}" HorizontalAlignment="Right" IsChecked="{Binding DpiUseSystemProxy}" />
+                        </Grid>
+                        <TextBlock Style="{StaticResource TxtMuted}" TextWrapping="Wrap" Margin="0,6,0,0"
+                                   Text="Пока обход включён, системный прокси указывает на него. Если при этом поднять прокси-ядро, системный прокси перейдёт к ядру; когда ядро остановят — вернётся к обходу." />
+                    </StackPanel>
+                </Border>
+
                 <!-- ==================== ядро ==================== -->
                 <Border Style="{StaticResource Card}" Padding="18,16" Margin="0,14,0,0">
                     <StackPanel>
